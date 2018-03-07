@@ -1,4 +1,5 @@
 import java.io.File
+import java.io.FileWriter
 import java.io.FileInputStream
 import java.io.IOException
 import java.security.MessageDigest
@@ -6,6 +7,7 @@ import java.security.MessageDigest
 import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.time.DateUtils
 import scala.collection.JavaConversions._
+import scala.collection.mutable
 import java.awt._
 import javax.swing._
 import javax.swing.event.ListSelectionListener
@@ -15,10 +17,17 @@ import javax.swing.event.ChangeEvent
 import java.awt.Dimension
 import java.awt.event._
 import java.util.ArrayList
+import java.util.Hashtable
 import java.awt.Graphics2D
 import processing.core.PApplet
 import processing.core.PSurface
 import processing.core.PConstants
+
+import org.rosuda.JRI.REXP
+import org.rosuda.JRI.Rengine
+import java.text.SimpleDateFormat
+import java.util.Date
+
 
 class MyListSelectionListener(f :ListSelectionEvent => Unit) extends ListSelectionListener{
   override def valueChanged(event: ListSelectionEvent) = {f(event)}
@@ -32,224 +41,20 @@ class MyChangeListener(f: ChangeEvent => Unit) extends ChangeListener{
   override def stateChanged(event: ChangeEvent) = { f(event) }
 }
 
-object ViewSet{
-  val r_view =230
-
-  val gcl_h = Array(16331852,16468280,16606765,16744740,16751381,16758301,16765222,16772399,
-                    14280239,11392812,8964154,7060043,4697177,3122285,2269830,209998,
-                    2199205,2523310,3567792,6186670,8675756,10902185,12735647,14437781)
-
-  def getTheta(t: Float, period: Float): Float = {
-    return PConstants.PI/2 - 2*PConstants.PI*(t/period);
-  }
-
-  var selectedGroup:String = ""
-  var display_glyph = true
-  var display_label = true
-
-}
-
-class Applet(f: JFrame) extends PApplet {
-  setSize(1000, 700)
-  smooth(8);
-  try {
-    val handleSettingsMethod: java.lang.reflect.Method =
-        this.getClass().getSuperclass().getDeclaredMethod("handleSettings", null);
-    handleSettingsMethod.setAccessible(true);
-    handleSettingsMethod.invoke(this, null);
-  } catch {
-    case e:Throwable => e.printStackTrace()
-  }
-
-  val surfacehh = super.initSurface()
-  val canvas= surfacehh.getNative().asInstanceOf[Canvas];
-  surfacehh.placeWindow(Array(0, 0), Array(0, 0));
-  val panel = new JPanel()
-  panel.add(canvas)
-  f.add(panel,BorderLayout.WEST);
-  //this.showSurface()
-  this.startSurface();
-
-  override def settings() {
-    size(1000, 700)
-    smooth(8);
-  }
-  override def setup(){
-    background(255, 255, 255);
-
-  }
-
-  override def draw(){
-    colorMode(PConstants.RGB)
-    background(255,255,255)
-    pushMatrix()
-    drawChronoViewWindow()
-    popMatrix()
-
-    val eventGroupsOption = EventData.eventGroups()
-    eventGroupsOption match {
-      case Some(eg) => {
-      }
-      case None => return
-    }
-
-    val eventGroups = eventGroupsOption.get
-    //描画start
-    translate(ViewSet.r_view+50, ViewSet.r_view+50)
-    colorMode(PConstants.RGB,255,255,255)
-    fill(color(200),64)
-
-    eventGroups.foreach{ map =>
-      val eventGroup:EventGroup = map._2
-      val r = eventGroup.getDiameter()
-      if(eventGroup.eventList(0).action != ViewSet.selectedGroup){
-        ellipse(eventGroup.x,eventGroup.y,r,r)
-      }
-    }
-
-    eventGroups.foreach{ map =>
-      if(map._2.eventList(0).action != ViewSet.selectedGroup && ViewSet.display_glyph){
-        GlyphDrawer.draw(map._2)
-      }
-    }
-
-    fill(0)
-    eventGroups.foreach{ map =>
-      val eventGroup:EventGroup = map._2
-      if(eventGroup.eventList(0).action != ViewSet.selectedGroup && ViewSet.display_label){
-        text(eventGroup.eventList(0).action,eventGroup.x,eventGroup.y)
-      }
-    }
-
-    if(eventGroups.get(ViewSet.selectedGroup) != None){
-      val selectedGroup = eventGroups.get(ViewSet.selectedGroup).get
-      fill(color(200,200,0),160)
-      val r = selectedGroup.getDiameter()
-      ellipse(selectedGroup.x,selectedGroup.y,r,r)
-      GlyphDrawer.draw(selectedGroup)
-      fill(0)
-      text(selectedGroup.eventList(0).action,selectedGroup.x,selectedGroup.y)
-
-      NodeDetailView.drawCumulativeGraph(eventGroups(ViewSet.selectedGroup))
-    }
-
-  }
-
-  def drawChronoViewWindow() {
-    translate(ViewSet.r_view+50, ViewSet.r_view+40)
-//    fill(0,0,0,64)
-//    rect(-ViewSet.r_view-50,-ViewSet.r_view-50,ViewSet.r_view*2+100,ViewSet.r_view*2+80)
-    textSize(10);
-    textAlign(PConstants.CENTER);
-    stroke(0);
-    fill(255,255,255);
-
-    ellipse(0, 0, ViewSet.r_view * 2, ViewSet.r_view * 2);
-
-    noStroke()
-    colorMode(PConstants.HSB,24,100,100)
-    for (h <- 0 to EventData.period-1) {
-      val theta = ViewSet.getTheta(h, EventData.period);
-      val x = ((ViewSet.r_view + 20) * Math.cos(theta)).asInstanceOf[Float];
-      val y = ((ViewSet.r_view + 20) * Math.sin(theta)).asInstanceOf[Float];
-      fill(color(h,100,100))
-      text(h, x, y * -1);
-    }
-
-  }
-
-  object GlyphDrawer{
-    def draw(eg: EventGroup){
-      pushMatrix()
-      translate(eg.x, eg.y)
-
-      drawCircleGlyph(eg)
-
-      popMatrix()
-    }
-
-    def drawCircleGlyph(eg: EventGroup) {
-      val r_max = eg.getDiameter();
-      for (i <- 0 to EventData.period - 1) {
-        val nr = r_max / 6;
-        val dx = nr * Math.cos(ViewSet.getTheta(i, EventData.period));
-        val dy = nr * Math.sin(ViewSet.getTheta(i, EventData.period)) * -1;
-
-        val count = eg.freqCount
-        val m_i = eg.m_i
-        if(count.size < 2) {
-          return
-        }
-
-        val al = PApplet.map(count(i), 0, count(m_i), 0.4f, 0.8f);
-        colorMode(PConstants.HSB,24,100,100)
-        fill(color(i,100,100), 128);
-
-        var ar = Math.sqrt(count(i) / PConstants.PI);
-        val mr = Math.sqrt(count(m_i) / PConstants.PI);
-        ar =  ar * ((0.3 * r_max/2) / mr);
-        ellipse(dx.asInstanceOf[Float], dy.asInstanceOf[Float], ar.asInstanceOf[Float], ar.asInstanceOf[Float]);
-        colorMode(PConstants.RGB,255,255,255)
-      }
-    }
-  }
-
-  object NodeDetailView{
-    def drawCumulativeGraph(eg: EventGroup){
-      val eventsListByDay = eg.aggressionEventListByDay();
-      val w = (350.0 / eventsListByDay.getAllDateCount().asInstanceOf[Float]).asInstanceOf[Float];
-
-      pushMatrix();
-      translate(300, 150);
-      stroke(0, 128);
-      line(0, 0, 350, 0);
-      fill(0);
-
-      val dateformat = DateFormat.getDateFormat(eventsListByDay.get(0).time)
-      val lf = eventsListByDay.firstDate(dateformat)
-      val ld = eventsListByDay.lastDate(dateformat)
-
-      import java.text.SimpleDateFormat
-      import java.util.Date
-      text(new SimpleDateFormat("yyyy-MM-dd").format(lf), 0  , 10);
-      text(new SimpleDateFormat("yyyy-MM-dd").format(ld), 350, 10);
-
-      var totalHeight = 0.0f;
-      var total = 0.0f
-      var d = 0
-      eventsListByDay.foreach{ events =>
-        val tmpDate:Date = DateFormat.dateformatOption(dateformat, events.time).get
-        val frq = events.size()
-
-        val beforeHeight = totalHeight
-
-        strokeWeight(1.0f)
-        stroke(0,64)
-
-        line((d)*(w), beforeHeight*(-1f),(d+ events.interval-1)*w,totalHeight*(-1f))
-        total = total + frq
-        totalHeight = PApplet.map(total, 0, eg.eventList.size()+5, 0, 100);
-
-        strokeWeight(2.0f);
-        colorMode(PConstants.HSB,24,100,100)
-        stroke(tmpDate.getHours(),100,100)
-        colorMode(PConstants.RGB,255,255,255)
-
-        line((d + events.interval-1)*(w), beforeHeight*(-1f),(d + events.interval)*w,totalHeight*(-1f))
-        d = d + events.interval
-      }
-      popMatrix();
-      strokeWeight(1.0f);
-    }
-  }
-
-}
 
 object Window2{
   def main(args: Array[String]){
+    val frame = new JFrame();
+    frame.setLayout(new BorderLayout())
+    frame.setSize(1200,700);
+    val second = new Applet(frame);
+
     val menubar = new JMenuBar()
+   // menubar.add(Box.createHorizontalGlue())
     val menuFile = new JMenu("ファイル")
+    val menuData = new JMenu("データ")
     menubar.add(menuFile)
+    menubar.add(menuData)
 
     val menuNew = new JMenuItem("新規")
     val menuOpen = new JMenuItem("開く")
@@ -259,21 +64,39 @@ object Window2{
     menuFile.add(menuOpen)
     menuFile.add(menuClose)
 
-    val frame = new JFrame();
-    frame.setLayout(new BorderLayout())
-    frame.setSize(1200,700);
-    val second = new Applet(frame);
+    val menuMDS = new JMenu("MDS")
+    val menuDTW = new JMenuItem("DTW")
+    val menuDFM = new JMenuItem("eades適用")
+    val menuCluster = new JMenuItem("クラスタリング")
+    menuData.add(menuMDS)
+    menuData.add(menuDTW)
+    menuData.add(menuDFM)
+    menuData.add(menuCluster)
     frame.setJMenuBar(menubar)
+
+    val menuEuclidean = new JMenuItem("euclidean")
+    val menuManhattan = new JMenuItem("manhattan")
+    val menuCanberra = new JMenuItem("canberra")
+    val menuPearson = new JMenuItem("pearson")
+    val menuCorrelation = new JMenuItem("correlation")
+
+    menuMDS.add(menuEuclidean)
+    menuMDS.add(menuManhattan)
+    menuMDS.add(menuCanberra)
+    menuMDS.add(menuPearson)
+    menuMDS.add(menuCorrelation)
 
     val centerPanel = new JPanel()
     centerPanel.setSize(10,10)
-    frame.add(centerPanel, BorderLayout.CENTER)
+    frame.add(centerPanel, BorderLayout.EAST)
 
     val colListPanel = new JPanel()
+    colListPanel.setSize(120,700)
     colListPanel.setLayout(new BorderLayout)
-    frame.add(colListPanel,BorderLayout.EAST)
+    frame.add(colListPanel,BorderLayout.WEST)
 
-    val colList = new JList(EventData.cols)
+    val colList = new JList(new Array[String](1))
+    colList.setFixedCellWidth(120)
     colListPanel.add(colList,BorderLayout.CENTER)
     val button = new JButton("表示切替")
     colListPanel.add(button,BorderLayout.SOUTH)
@@ -314,14 +137,58 @@ object Window2{
     cb2.setSelected(true)
     p.add(cb2)
 
+    val periodSlider = new JSlider(1,4)
+    periodSlider.addChangeListener(new MyChangeListener (event => {
+
+    }))
+    periodSlider.setMajorTickSpacing(1)
+    periodSlider.setPaintTicks(true)
+
+    val periodlabels = new Hashtable[Integer, JComponent]()
+    periodlabels.put(new Integer(1), new JLabel("1day"))
+    periodlabels.put(new Integer(2), new JLabel("1week"))
+    periodlabels.put(new Integer(3), new JLabel("1month"))
+    periodlabels.put(new Integer(4), new JLabel("1year"))
+    periodSlider.setLabelTable(periodlabels)
+
+    p.add(periodSlider)
+
+    val gravitySlider = new JSlider(0,100)
+    val g_clockSlider = new JSlider(0,100)
+
+    gravitySlider.setValue(10)
+    g_clockSlider.setValue(15)
+    p.add(gravitySlider)
+    p.add(g_clockSlider)
+
     frame.add(bottomPanel, BorderLayout.SOUTH)
 
     frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
     frame.setVisible(true);
 
+    val framedtw = new JFrame();
+    framedtw.setLayout(new BorderLayout())
+    framedtw.setSize(370,580);
+    framedtw.setVisible(true);
+    val p3dtw = new DTWViewApplet(framedtw);
+
+
     button.addActionListener(new MyActionListener (event => {
       val index = colList.getSelectedIndex()
       EventData.changeEventGroups(index)
+      eventGroupList.setListData(EventData.eventGroupNames())
+    }))
+
+    menuDTW.addActionListener(new MyActionListener (event => {
+
+      val mdsposition = EventData.DTWdistMDS()
+      EventData.setMDSPosition(mdsposition._1, mdsposition._2)
+    }))
+
+    menuCluster.addActionListener(new MyActionListener (event => {
+      val ambigroup = EventData.ambiguousGroups()
+      val graph = new Graph(40,ambigroup.size,ambigroup)
+      EventData.clustering()
       eventGroupList.setListData(EventData.eventGroupNames())
     }))
 
@@ -334,19 +201,174 @@ object Window2{
         val importFile:File = fc.getSelectedFile()
         if(isCsvFile(importFile)){
           val opened = FileLoader.fileOpen(importFile)
-          EventData.makeEventGroups(0,opened._1,opened._2)
-          colList.setListData(EventData.cols)
+          EventData.makeEventGroups(0, opened._2)
+          colList.setListData(opened._1)
           eventGroupList.setListData(EventData.eventGroupNames())
           frame.show()
-
+          //EventData.printfreq()
         }else{
           println("open error")
         }
       }
     }))
 
+    menuEuclidean.addActionListener(new MyActionListener( event => {
+      val mdsposition = JavaToRCooperator.mdsAndProcrustesRotation("euclidean")
+      EventData.setMDSPosition(mdsposition._1, mdsposition._2)
+    }))
+    menuManhattan.addActionListener(new MyActionListener( event => {
+      val mdsposition = JavaToRCooperator.mdsAndProcrustesRotation("manhattan")
+      EventData.setMDSPosition(mdsposition._1, mdsposition._2)
+    }))
+    menuCanberra.addActionListener(new MyActionListener( event => {
+      val mdsposition = JavaToRCooperator.mdsAndProcrustesRotation("canberra")
+      EventData.setMDSPosition(mdsposition._1, mdsposition._2)
+    }))
+    menuPearson.addActionListener(new MyActionListener( event => {
+      val mdsposition = JavaToRCooperator.mdsAndProcrustesRotation("pearson")
+      EventData.setMDSPosition(mdsposition._1, mdsposition._2)
+    }))
+    menuCorrelation.addActionListener(new MyActionListener( event => {
+      val mdsposition = JavaToRCooperator.mdsAndProcrustesRotation("correlation")
+      EventData.setMDSPosition(mdsposition._1, mdsposition._2)
+    }))
+
+    menuDFM.addActionListener(new MyActionListener( event => {
+      val ambigroup = EventData.ambiguousGroups()
+      val graph_eades = new GraphEades(30f,gravitySlider.getValue()/100f,g_clockSlider.getValue()/1000f,40,ambigroup.size,ambigroup)
+      val newpositions = graph_eades.draw()
+      ViewSet.points = graph_eades.ccc();
+
+      EventData.setPosition(newpositions)
+    }))
   }
 
   def isCsvFile(f: File): Boolean = f.isFile() && f.canRead() && f.getPath().endsWith(".csv")
 
+}
+
+object JavaToRCooperator{
+
+  def DTWdist(arr: Array[Array[Double]], i: Int) : Array[Float] = {
+    val engine = if(Rengine.getMainEngine !=null) Rengine.getMainEngine else new Rengine(Array("--no-save"), false, null)
+    engine.eval("library(dtw)")
+
+    val dist = new Array[Float](arr.size)
+
+    engine.assign("a",arr(i))
+    engine.eval("av <- as.vector(a)")
+    engine.eval("alen <- length(av)")
+    (0 to arr.size-1).foreach{ j=>
+      if(i == j){
+        dist(j) = 1000000
+      }else{
+        engine.assign("b",arr(j))
+        engine.eval("bv <- as.vector(b)")
+        engine.eval("blen <- length(bv)")
+        val d = engine.eval("dtw(av, bv, step.pattern = symmetric1, window.type='sakoechiba', window.size = abs(alen - blen), distance.only=TRUE)$distance").asDouble.asInstanceOf[Float]
+        dist(j) = d
+      }
+    }
+    return dist
+  }
+
+  def DTWdistMDS(arr: Array[Array[Double]]) : (Array[Double],Array[Double]) = {
+    val clearwriter = new FileWriter(new File("dtwdist.csv"), false);
+    clearwriter.write("")
+    clearwriter.close()
+
+    val engine = if(Rengine.getMainEngine !=null) Rengine.getMainEngine else new Rengine(Array("--no-save"), false, null)
+
+    engine.eval("library(dtw)")
+
+    val dist = Array.ofDim[Float](arr.size,arr.size)
+
+    (0 to arr.size-2).foreach{ i=>
+      engine.assign("a",arr(i))
+      engine.eval("av <- as.vector(a)")
+      engine.eval("alen <- length(av)")
+      (i+1 to arr.size-1).foreach{ j=>
+        engine.assign("b",arr(j))
+        engine.eval("bv <- as.vector(b)")
+        engine.eval("blen <- length(bv)")
+        val d = engine.eval("dtw(av, bv, step.pattern = symmetric1, window.type='sakoechiba', window.size = abs(alen - blen), distance.only=TRUE)$distance").asDouble.asInstanceOf[Float]
+        dist(i)(j) = d
+        dist(j)(i) = d
+      }
+    }
+
+    val filewriter = new FileWriter(new File("dtwdist.csv"), false);
+    (0 to arr.size-1).foreach{ i=>
+      (0 to arr.size-1).foreach{ j=>
+        filewriter.write(dist(i)(j)+",")
+      }
+      filewriter.write("\n")
+    }
+    filewriter.close()
+
+    val commands = Array("X <- read.csv('dtwdist.csv',header=F)","data <- X[,1:ncol(X)-1]")
+    commands.foreach{ s =>
+      engine.eval(s)
+    }
+    engine.eval("cmd <- as.array(cmdscale(data))")
+    engine.eval("points = matrix(0, nrow = nrow(X), ncol = 2)")
+    val pos = EventData.chronoPositions
+    val cpx = pos.map(p => p.x.asInstanceOf[Double]).toArray
+    val cpy = pos.map(p => p.y.asInstanceOf[Double]).toArray
+
+    engine.assign("cx",cpx)
+    engine.assign("cy",cpy)
+    engine.eval("points[,1] <- cx")
+    engine.eval("points[,2] <- cy")
+    engine.eval("library(MASS)")
+    engine.eval("library(vegan)")
+    engine.eval("proc <- procrustes(points,cmd,scale=TRUE)")
+
+    val x = engine.eval("proc$Yrot[,1]").asDoubleArray()
+    val y = engine.eval("proc$Yrot[,2]").asDoubleArray()
+    engine.end()
+    return (x, y)
+  }
+
+  def mdsAndProcrustesRotation(disttype: String):(Array[Double],Array[Double]) = {
+    val flist:Array[Array[Int]] = EventData.frequencyVectors()
+    val clearwriter = new FileWriter(new File("flisttmp.csv"), false);
+    clearwriter.write("")
+    clearwriter.close()
+
+    val filewriter = new FileWriter(new File("flisttmp.csv"), true);
+
+    EventData.ambiguousGroups.foreach{ eg =>
+      val gf = eg.freqCount
+      gf.foreach{ f=>
+        filewriter.write(f+",");
+      }
+      filewriter.write("\n")
+    }
+    filewriter.close()
+
+    val engine = if(Rengine.getMainEngine !=null) Rengine.getMainEngine else new Rengine(Array("--no-save"), false, null)
+    val commands = Array("library(amap)","X <- read.csv('flisttmp.csv',header=F)","data <- X[,1:24]")
+    commands.foreach{ s =>
+      engine.eval(s)
+    }
+    engine.eval("cmd <- as.array(cmdscale(Dist(data,method=\""+disttype+"\")))")
+    engine.eval("points = matrix(0, nrow = nrow(X), ncol = 2)")
+    val pos = EventData.chronoPositions
+    val cpx = pos.map(p => p.x.asInstanceOf[Double]).toArray
+    val cpy = pos.map(p => p.y.asInstanceOf[Double]).toArray
+
+    engine.assign("cx",cpx)
+    engine.assign("cy",cpy)
+    engine.eval("points[,1] <- cx")
+    engine.eval("points[,2] <- cy")
+    engine.eval("library(MASS)")
+    engine.eval("library(vegan)")
+    engine.eval("proc <- procrustes(points,cmd,scale=TRUE)")
+
+    val x = engine.eval("proc$Yrot[,1]").asDoubleArray()
+    val y = engine.eval("proc$Yrot[,2]").asDoubleArray()
+    engine.end()
+    return (x, y)
+  }
 }

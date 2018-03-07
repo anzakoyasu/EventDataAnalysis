@@ -14,25 +14,27 @@ object FileLoader {
     val loadedlist = new ArrayList[String]
     var cols = new Array[String](1)
 
-    //heap errorの例外
+    try{//heap errorの例外
+      ite.zipWithIndex.foreach{ case(row , i) =>
+        val s = row split ","
 
-    ite.zipWithIndex.foreach{ case(row , i) =>
-      val s = row split ","
-
-      if(i==0){
-        cols = s
-      }else{
-        loadedlist.add(row)
-        //val date = dateformatOption(dateformats(format_type),datestring).get
+        if(i==0){
+          cols = s
+        }else{
+          loadedlist.add(row)
+          //val date = dateformatOption(dateformats(format_type),datestring).get
+        }
       }
+      ite.close
+    }catch{
+      case e:Exception => println("heap error")
     }
-    ite.close
+
     (cols, sortByDate(loadedlist))
   }
 
-
   def sortByDate(list: JList[String]):ArrayList[String] = {
-    var r = new ArrayList[String](list)
+    val r = new ArrayList[String](list)
     val date = r(1) split ","
     val dateFormat = DateFormat.getDateFormat(date(2).replaceAll("T"," "))
 
@@ -43,9 +45,7 @@ object FileLoader {
 
         val s2 = o2 split ","
         val o2time:Date = (DateFormat.dateformatOption(dateFormat, s2(2).replaceAll("T"," ")) ).get
-
-        if(o1time.getTime() > o2time.getTime()) 1
-        else                                    -1
+        o1time.getTime().compareTo(o2time.getTime())
       }
     })
     r
